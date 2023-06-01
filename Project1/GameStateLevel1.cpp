@@ -145,8 +145,8 @@ static int			sMortalCountdown;
 			walking		= 2
 			walking_up	= 3
 			jumping		= 4
-			jumping_down= 5
-			jumping_up	= 6
+			jumping_up	= 5
+			jumping_down= 6
 */
 static AnimationSprite playerAnimations[14];
 
@@ -546,8 +546,8 @@ void GameStateLevel1Init(void) {
 		playerAnimations[2] = { 0,6,6 };
 		playerAnimations[3] = { 0,0,7 };
 		playerAnimations[4] = { 0,5,0 };
-		playerAnimations[5] = { 1,5,0 };
-		playerAnimations[6] = { 2,5,0 };
+		playerAnimations[5] = { 2,5,0 };
+		playerAnimations[6] = { 1,5,0 };
 
 		// shooting
 		playerAnimations[7] = { 3,5,1 };
@@ -555,8 +555,8 @@ void GameStateLevel1Init(void) {
 		playerAnimations[9] = { 0,4,7 };
 		playerAnimations[10] = { 0,3,7 };
 		playerAnimations[11] = { 0,2,1 };
-		playerAnimations[12] = { 4,2,1 };
-		playerAnimations[13] = { 2,2,1 };
+		playerAnimations[12] = { 2,2,1 };
+		playerAnimations[13] = { 4,2,1 };
 	}
 
 	//-----------------------------------------
@@ -574,7 +574,7 @@ void GameStateLevel1Init(void) {
 			case 5:
 
 				sPlayer = gameObjInstCreate(TYPE_PLAYER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, false, 0, 0, 0.125f);
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.125f);
 				sPlayer->mortal = false;
 				sPlayer_start_position = glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f);
 
@@ -621,11 +621,17 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 	//-----------------------------------------
 
 	if (sRespawnCountdown <= 0) {
+		// assign 7 if true
+		int isShooting = 0;
+
+		// apply animation from [playerAnimations]
+		int playerMotion = 0;
+
 
 		//+ Moving the Player
-		//	- W:	jumping
+		//	- SPACE:	jumping
 		//	- AD:	go left, go right
-		if ((glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) && (sPlayer->jumping == false)) {
+		if ((glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) && (sPlayer->jumping == false)) {
 			sPlayer->jumping = true;
 			sPlayer->velocity.y = JUMP_VELOCITY;
 			SoundEngine->play2D("jump.wav");
@@ -635,29 +641,44 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 			sPlayer->scale.x = -1;
 			sPlayer->velocity.x = -MOVE_VELOCITY_PLAYER;
 
-			// play animation
-			sPlayer->anim = true;
-			ApplyAnimation(sPlayer, playerAnimations[2]);
+			playerMotion = 2;
 		}
 		else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 			sPlayer->scale.x = 1;
 			sPlayer->velocity.x = MOVE_VELOCITY_PLAYER;
 
-			// play animation
-			sPlayer->anim = true;
-			ApplyAnimation(sPlayer, playerAnimations[2]);
+			playerMotion = 2;
 		}
 		else {
 			float friction = 0.05f;
 			sPlayer->velocity.x *= (1.0f - friction);
 
 			// using Idle animation
-			ApplyAnimation(sPlayer, playerAnimations[0]);
+			playerMotion = 0;
 		}
 
 		if (sPlayer->jumping) {
-			ApplyAnimation(sPlayer, playerAnimations[4]);
+			playerMotion = 4;
 		}
+
+
+		// Get player's direction input
+		// W - Up
+		// S - Down
+		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+			playerMotion++;
+		}
+		else if (sPlayer->jumping && glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+			playerMotion += 2;
+		}
+
+		// J - shoot
+		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)
+		{
+			isShooting = 7;
+		}
+
+		ApplyAnimation(sPlayer, playerAnimations[isShooting + playerMotion]);
 	}
 	else {
 		//+ update sRespawnCountdown
