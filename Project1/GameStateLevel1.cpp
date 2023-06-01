@@ -20,7 +20,12 @@ using namespace irrklang;
 #define FLAG_ACTIVE					1
 #define COOLDOWN				    1000				
 #define ANIMATION_SPEED				60				// 1 = fastest (update every frame)
-#define BULLET_LIFESPAN				10000			// 10s
+
+// shooting
+#define BULLET_LIFESPAN				5				// 5s
+#define BULLET_SPEED				10			
+#define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec				
+
 // Movement flags
 #define GRAVITY						-37.0f
 #define JUMP_VELOCITY				18.0f
@@ -85,6 +90,7 @@ struct GameObj
 	glm::mat4		modelMatrix;		// transform from model space [-0.5,0.5] to map space [0,MAP_SIZE]
 	int				mapCollsionFlag;	// for testing collision detection with map
 	bool			jumping;			// Is Player jumping or on the ground
+	bool			ignorePlayer;		// true if ignore player's collision
 
 	//animation data
 	bool			mortal;
@@ -133,6 +139,7 @@ static int			sPlayerLives;									// The number of lives left
 static int			sScore;
 static int			sRespawnCountdown;								// Respawn player waiting time (in #frame)
 static int			sMortalCountdown;
+static float		sShootingCooldown = 0;
 
 
 /*
@@ -645,6 +652,12 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		// assign 7 if true
 		int isShooting = 0;
 
+		// shooting y direction
+		// -1 down
+		// 0 default
+		// 1 top
+		int shootingY = 0;
+
 		// apply animation from [playerAnimations]
 		int playerMotion = 0;
 
@@ -688,16 +701,40 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		// S - Down
 		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 			playerMotion++;
+
+			shootingY = 1;
 		}
 		else if (sPlayer->jumping && glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
 			playerMotion += 2;
+
+			shootingY = -1;
 		}
 
 		// J - shoot
 		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)
 		{
 			isShooting = 7;
-			gameObjInstCreate(TYPE_BULLET, sPlayer->position, sPlayer->velocity, glm::vec3(0.5f, 0.5f, 0.5f), sPlayer->orientation, false, 0, 0, 0);
+
+			if (sShootingCooldown > 0)
+			{
+				sShootingCooldown -= dt;
+			}
+			else
+			{
+				glm::vec3 bulletVel = glm::vec3(BULLET_SPEED * sPlayer->scale.x, 0, 0);
+				if (shootingY)
+				{
+					bulletVel.x = 0;
+					bulletVel.y = BULLET_SPEED * shootingY;
+				}
+
+				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, sPlayer->position, bulletVel, glm::vec3(0.5f, 0.5f, 0.5f), sPlayer->orientation, false, 0, 0, 0);
+				bulletInst->lifespan = 0;
+				bulletInst->ignorePlayer = true;
+
+				sShootingCooldown = PLAYER_FIRE_COOLDOWN;
+			}
+
 		}
 
 		ApplyAnimation(sPlayer, playerAnimations[isShooting + playerMotion]);
@@ -789,7 +826,29 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 	//--------------------------------------------------------------------
 	// Decrease object lifespan for self destroyed objects (ex. explosion)
 	//--------------------------------------------------------------------
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++)
+	{
+		GameObj* pInst = sGameObjInstArray + i;
 
+		// skip inactive object
+		if (pInst->flag == FLAG_INACTIVE)
+			continue;
+
+		switch (pInst->type)
+		{
+		case TYPE_BULLET:
+			if (pInst->lifespan > BULLET_LIFESPAN) {
+				gameObjInstDestroy(*pInst);
+			}
+			else {
+				pInst->lifespan += dt;
+			}
+			break;
+		default:
+			break;
+		}
+
+	}
 
 	//-----------------------------------------
 	// Update animation for animated object 
