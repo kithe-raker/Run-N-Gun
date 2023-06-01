@@ -29,7 +29,9 @@ using namespace irrklang;
 #define BULLET_SPEED				12			
 #define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec		
 #define PATROL_FIRE_COOLDOWN		1.f			
-#define PATROL_BULLET_SPEED			5			
+#define PATROL_BULLET_SPEED			5	
+#define SNIPER_FIRE_COOLDOWN		2.f			
+#define SNIPER_BULLET_SPEED			10	
 
 
 // Movement flags
@@ -464,6 +466,41 @@ void PatrolStateMachine(GameObj* patrolInst, float dt) {
 	}
 }
 
+void SniperStateMachine(GameObj* sniperInst, float dt) {
+	if (sPlayer->flag == FLAG_INACTIVE) return;
+
+	float distance = sPlayer->position.x - sniperInst->position.x;
+
+	// in shooting range of enemy
+	if (abs(distance) < 7) {
+		sniperInst->scale.x = distance > 0 ? 1 : -1;
+		ApplyAnimation(sniperInst, sniperAnimations[1]);
+
+		if (sniperInst->shootCooldown > 0) {
+			sniperInst->shootCooldown -= dt;
+		}
+		else {
+			// Calculate the direction vector from the object's position to the target point
+			glm::vec3 direction = glm::normalize(sPlayer->position - sniperInst->position);
+
+			// Calculate the angle between the direction vector and the positive x-axis
+			float angle = atan2(direction.y, direction.x) - PI / 2.0f;
+
+			glm::vec3 bullet_velocity = glm::vec3(SNIPER_BULLET_SPEED * glm::cos(angle + PI / 2.0f),
+				SNIPER_BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
+
+			GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, sniperInst->position, bullet_velocity, glm::vec3(0.5f, 0.5f, 0.5f), 0, false, 0, 0, 0);
+			bulletInst->playerOwn = false;
+			bulletInst->lifespan = 0;
+
+			sniperInst->shootCooldown = SNIPER_FIRE_COOLDOWN;
+		}
+	}
+	else {
+		ApplyAnimation(sniperInst, sniperAnimations[0]);
+	}
+}
+
 
 
 // -------------------------------------------
@@ -834,7 +871,7 @@ void GameStateLevel1Init(void) {
 				// Sniper
 			case 9:
 				enemy = gameObjInstCreate(TYPE_SNIPER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0714f);
+					glm::vec3(-1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0714f);
 				enemy->shootCooldown = 0.f;
 				break;
 
@@ -990,6 +1027,9 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 			break;
 		case TYPE_PATROL:
 			PatrolStateMachine(pInst, dt);
+			break;
+		case TYPE_SNIPER:
+			SniperStateMachine(pInst, dt);
 			break;
 		case TYPE_BULLET:
 			BulletBehave(pInst);
