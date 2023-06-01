@@ -23,7 +23,7 @@ using namespace irrklang;
 
 // shooting
 #define BULLET_LIFESPAN				5				// 5s
-#define BULLET_SPEED				10			
+#define BULLET_SPEED				12			
 #define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec				
 
 // Movement flags
@@ -90,7 +90,7 @@ struct GameObj
 	glm::mat4		modelMatrix;		// transform from model space [-0.5,0.5] to map space [0,MAP_SIZE]
 	int				mapCollsionFlag;	// for testing collision detection with map
 	bool			jumping;			// Is Player jumping or on the ground
-	bool			ignorePlayer;		// true if ignore player's collision
+	bool			playerOwn;			// true if ignore player's collision
 
 	//animation data
 	bool			mortal;
@@ -264,6 +264,7 @@ int CheckMapCollision(float PosX, float PosY, bool& inTheAir) {
 // State machine functions
 // -----------------------------------------------------
 
+
 void EnemyStateMachine(GameObj* pInst) {
 	bool isInAir = false;
 
@@ -314,6 +315,7 @@ void EnemyStateMachine(GameObj* pInst) {
 		break;
 	}
 }
+
 
 void ApplyAnimation(GameObj* pInst, const AnimationSprite& anim) {
 	pInst->initialOffsetX = anim.beginX * pInst->offset;
@@ -374,6 +376,61 @@ void gameObjInstDestroy(GameObj& pInst)
 
 	sNumGameObj--;
 	pInst.flag = FLAG_INACTIVE;
+}
+
+// -------------------------------------------
+// Utils functions
+// -------------------------------------------
+
+void PlayerTakeDamage(int damage = 1) {
+	sPlayerLives -= damage;
+	if (sPlayerLives <= 0) {
+		sRespawnCountdown = 2000;
+		gameObjInstDestroy(*sPlayer);
+	}
+	else {
+		sPlayer->mortal = false;
+		sMortalCountdown = COOLDOWN;
+	}
+}
+
+void BulletBehave(GameObj* bulletInst) {
+	if (!bulletInst->playerOwn) {
+		int result = _detectCollisionAABB(
+			{ sPlayer->position.x, sPlayer->position.y , 1.f, 1.f },
+			{ bulletInst->position.x, bulletInst->position.y, bulletInst->scale.x, bulletInst->scale.y });
+
+		if (result) {
+			gameObjInstDestroy(*bulletInst);
+			PlayerTakeDamage();
+		}
+
+		return;
+	}
+
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++)
+	{
+		GameObj* pInst = sGameObjInstArray + i;
+
+		// skip inactive object
+		if (pInst->flag == FLAG_INACTIVE || pInst->type == TYPE_ITEM)
+			continue;
+
+		if (pInst->type == TYPE_ENEMY) {
+			int result = _detectCollisionAABB(
+				{ bulletInst->position.x, bulletInst->position.y , bulletInst->scale.x, bulletInst->scale.y },
+				{ pInst->position.x, pInst->position.y, pInst->scale.x, pInst->scale.y });
+
+			if (result) {
+				gameObjInstDestroy(*pInst);
+				gameObjInstDestroy(*bulletInst);
+
+				break;
+			}
+		}
+	}
+
+
 }
 
 
@@ -730,7 +787,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 
 				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, sPlayer->position, bulletVel, glm::vec3(0.5f, 0.5f, 0.5f), sPlayer->orientation, false, 0, 0, 0);
 				bulletInst->lifespan = 0;
-				bulletInst->ignorePlayer = true;
+				bulletInst->playerOwn = true;
 
 				sShootingCooldown = PLAYER_FIRE_COOLDOWN;
 			}
@@ -772,6 +829,9 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		{
 		case TYPE_ENEMY:
 			EnemyStateMachine(pInst);
+			break;
+		case TYPE_BULLET:
+			BulletBehave(pInst);
 			break;
 		default:
 			break;
@@ -959,14 +1019,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 					gameObjInstDestroy(*pInst);
 				}
 				else {
-					if (--sPlayerLives <= 0) {
-						sRespawnCountdown = 2000;
-						gameObjInstDestroy(*sPlayer);
-					}
-					else {
-						sPlayer->mortal = false;
-						sMortalCountdown = COOLDOWN;
-					}
+					PlayerTakeDamage();
 				}
 			}
 		}
@@ -1089,7 +1142,13 @@ void GameStateLevel1Draw(void) {
 		// skip if out of view
 		if (objCoorX < minRenderCoorX || objCoorX > maxRenderCoorX ||
 			objCoorY < minRenderCoorY || objCoorY > maxRenderCoorY)
+		{
+			// if obj is bullet, destroy it
+			if (pInst->type == TYPE_BULLET)
+				gameObjInstDestroy(*pInst);
+
 			continue;
+		}
 
 
 		// Transform cell from map space [0,MAP_SIZE] to screen space [-width/2,width/2]
