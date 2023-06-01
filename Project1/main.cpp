@@ -29,7 +29,7 @@ GLFWwindow* window;
 #include "GameStateLevel2.h"
 
 // game state list
-enum{ LEVEL1 = 0, LEVEL2, RESTART, QUIT };
+enum { LEVEL1 = 0, LEVEL2, RESTART, QUIT };
 
 // variables to keep track the current, previous and next game state
 unsigned int	gGameStateInit;
@@ -38,12 +38,12 @@ unsigned int	gGameStatePrev;
 unsigned int	gGameStateNext;
 
 // pointer to functions for game state levelX functions
-void(*GameStateLoad)()						= 0;
-void(*GameStateInit)()						= 0;
-void(*GameStateUpdate)(double,long,int&)	= 0;
-void(*GameStateDraw)()						= 0;
-void(*GameStateFree)()						= 0;
-void(*GameStateUnload)()					= 0;
+void(*GameStateLoad)() = 0;
+void(*GameStateInit)() = 0;
+void(*GameStateUpdate)(double, long, int&) = 0;
+void(*GameStateDraw)() = 0;
+void(*GameStateFree)() = 0;
+void(*GameStateUnload)() = 0;
 
 // key manager, for one time pressing
 bool Rdown = false;
@@ -59,51 +59,51 @@ int		win_width = 1200;// 1024;
 int		win_height = 800;//  768;
 
 
-int main(void){
+int main(void) {
 
 	// Initialize the System (GFW, GLEW, Input, Create window)
 	SystemInit(win_width, win_height, "Mario Demo");
 	CDTInit(win_width, win_height);
 
 	// Initialize Game State (to level 1)
-	gGameStateInit	= LEVEL1;
-	gGameStateCurr	= gGameStateInit;
-	gGameStatePrev	= gGameStateInit;
-	gGameStateNext	= gGameStateInit;
+	gGameStateInit = LEVEL1;
+	gGameStateCurr = gGameStateInit;
+	gGameStatePrev = gGameStateInit;
+	gGameStateNext = gGameStateInit;
 
-	while(gGameStateCurr != QUIT){
-		
+	while (gGameStateCurr != QUIT) {
+
 		// Loading cases
-		if (gGameStateCurr == RESTART){
+		if (gGameStateCurr == RESTART) {
 			gGameStateCurr = gGameStatePrev;
 			gGameStateNext = gGameStateCurr;
 		}
-		else if (gGameStateCurr == LEVEL2){
-			GameStateLoad	= GameStateLevel2Load;
-			GameStateInit	= GameStateLevel2Init;
+		else if (gGameStateCurr == LEVEL2) {
+			GameStateLoad = GameStateLevel2Load;
+			GameStateInit = GameStateLevel2Init;
 			GameStateUpdate = GameStateLevel2Update;
-			GameStateDraw	= GameStateLevel2Draw;
-			GameStateFree	= GameStateLevel2Free;
+			GameStateDraw = GameStateLevel2Draw;
+			GameStateFree = GameStateLevel2Free;
 			GameStateUnload = GameStateLevel2Unload;
 			GameStateLoad();
 		}
-		else{	//LEVEL1
-			GameStateLoad	= GameStateLevel1Load;
-			GameStateInit	= GameStateLevel1Init;
+		else {	//LEVEL1
+			GameStateLoad = GameStateLevel1Load;
+			GameStateInit = GameStateLevel1Init;
 			GameStateUpdate = GameStateLevel1Update;
-			GameStateDraw	= GameStateLevel1Draw;
-			GameStateFree	= GameStateLevel1Free;
+			GameStateDraw = GameStateLevel1Draw;
+			GameStateFree = GameStateLevel1Free;
 			GameStateUnload = GameStateLevel1Unload;
 			GameStateLoad();
 		}
-		
+
 		FrameInit();
 		GameStateInit();
 		framenumber = 0;
-		
 
-		while (gGameStateCurr == gGameStateNext){
-			
+
+		while (gGameStateCurr == gGameStateNext) {
+
 			frametime = FrameStart();
 			framenumber++;
 
@@ -115,52 +115,53 @@ int main(void){
 			GameStateDraw();
 
 			// Check return state from Update()
-			if (state == 2){
+			if (state == 2) {
 				gGameStateNext = RESTART;
 			}
-			
+
 
 			// Check if the ESC key was pressed or the window was closed
-			if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS || glfwWindowShouldClose(window) == 1){
+			if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS || glfwWindowShouldClose(window) == 1) {
 				gGameStateNext = QUIT;
 			}
 
 			// Check if User want to restart level
-			if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !Rdown){
+			if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !Rdown) {
 				gGameStateNext = RESTART;
 				Rdown = true;
 			}
-			if (glfwGetKey(window, GLFW_KEY_R) == GLFW_RELEASE && Rdown){Rdown = false;}
+			if (glfwGetKey(window, GLFW_KEY_R) == GLFW_RELEASE && Rdown) { Rdown = false; }
 
 			// Check if User want to change level
-			if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS && !Ndown){
-				if (gGameStateCurr == LEVEL1){
+			if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS && !Ndown) {
+				if (gGameStateCurr == LEVEL1) {
 					gGameStateNext = LEVEL2;
-				}else{
+				}
+				else {
 					gGameStateNext = LEVEL1;
 				}
 				Ndown = true;
 			}
-			if (glfwGetKey(window, GLFW_KEY_N) == GLFW_RELEASE && Ndown){ Ndown = false; }
+			if (glfwGetKey(window, GLFW_KEY_N) == GLFW_RELEASE && Ndown) { Ndown = false; }
 
 			FrameEnd();
 		}
 
 		GameStateFree();
 
-		if (gGameStateNext != RESTART){
+		if (gGameStateNext != RESTART) {
 			GameStateUnload();
 		}
 
 		gGameStatePrev = gGameStateCurr;
 		gGameStateCurr = gGameStateNext;
-	} 
+	}
 
 
 	// Do system clean up before quit
 	CDTShutdown();
 	SystemShutdown();
-	
+
 	return 0;
 }
 

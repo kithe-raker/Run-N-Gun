@@ -49,7 +49,9 @@ enum GAMEOBJ_TYPE
 	TYPE_PLAYER = 0,
 	TYPE_ENEMY,
 	TYPE_ITEM,
-	TYPE_BULLET
+	TYPE_BULLET,
+	TYPE_PATROL,
+	TYPE_SNIPER
 };
 
 //State machine states
@@ -161,6 +163,19 @@ static float		sShootingCooldown = 0;
 			jumping_down= 6
 */
 static AnimationSprite playerAnimations[14];
+/*
+	mapping of patrol's animation
+	idle = 0
+	walking = 1
+	shooting = 2
+*/
+static AnimationSprite patrolAnimations[3];
+/*
+	mapping of sniper's animation
+	idle = 0
+	shooting = 1
+*/
+static AnimationSprite sniperAnimations[2];
 
 //Sound
 ISoundEngine* SoundEngine;
@@ -268,6 +283,12 @@ int CheckMapCollision(float PosX, float PosY, bool& inTheAir) {
 // -----------------------------------------------------
 
 
+void ApplyAnimation(GameObj* pInst, const AnimationSprite& anim) {
+	pInst->initialOffsetX = anim.beginX * pInst->offset;
+	pInst->offsetY = anim.beginY * pInst->offset;
+	pInst->numFrame = anim.endFrame;
+}
+
 void EnemyStateMachine(GameObj* pInst) {
 	bool isInAir = false;
 
@@ -309,21 +330,57 @@ void EnemyStateMachine(GameObj* pInst) {
 	switch (pInst->state)
 	{
 	case STATE_GOING_LEFT:
+		pInst->scale.x = 1;
 		pInst->velocity.x = -MOVE_VELOCITY_ENEMY;
 		break;
 	case STATE_GOING_RIGHT:
+		pInst->scale.x = -1;
 		pInst->velocity.x = MOVE_VELOCITY_ENEMY;
 		break;
 	default:
+		pInst->velocity.x = 0;
 		break;
 	}
 }
 
+void PatrolStateMachine(GameObj* patrolInst) {
+	float distance = sPlayer->position.x - patrolInst->position.x;
 
-void ApplyAnimation(GameObj* pInst, const AnimationSprite& anim) {
-	pInst->initialOffsetX = anim.beginX * pInst->offset;
-	pInst->offsetY = anim.beginY * pInst->offset;
-	pInst->numFrame = anim.endFrame;
+	EnemyStateMachine(patrolInst);
+
+	// in detect range of enemy
+	if (abs(distance) < 5) {
+
+		// in shooting range of enemy
+
+		if (abs(distance) < 4) {
+			patrolInst->state = STATE_NONE;
+			patrolInst->scale.x = distance > 0 ? 1 : -1;
+			ApplyAnimation(patrolInst, patrolAnimations[2]);
+		}
+		else
+		{
+			patrolInst->state = distance > 0 ? STATE_GOING_RIGHT : STATE_GOING_LEFT;
+		}
+	}
+
+
+	switch (patrolInst->state)
+	{
+	case STATE_GOING_LEFT:
+		patrolInst->scale.x = -1;
+		patrolInst->velocity.x = -MOVE_VELOCITY_ENEMY;
+		ApplyAnimation(patrolInst, patrolAnimations[1]);
+		break;
+	case STATE_GOING_RIGHT:
+		patrolInst->scale.x = 1;
+		patrolInst->velocity.x = MOVE_VELOCITY_ENEMY;
+		ApplyAnimation(patrolInst, patrolAnimations[1]);
+		break;
+	default:
+		patrolInst->velocity.x = 0;
+		break;
+	}
 }
 
 
@@ -399,6 +456,9 @@ void PlayerTakeDamage(int damage = 1) {
 
 void BulletBehave(GameObj* bulletInst) {
 	if (!bulletInst->playerOwn) {
+
+		if (!sPlayer->mortal) return;
+
 		int result = _detectCollisionAABB(
 			{ sPlayer->position.x, sPlayer->position.y , 1.f, 1.f },
 			{ bulletInst->position.x, bulletInst->position.y, bulletInst->scale.x, bulletInst->scale.y });
@@ -545,6 +605,44 @@ void GameStateLevel1Load(void) {
 	*pTex = TextureLoad("rngun/bullet.png");
 
 
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.0416f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.0416f; v3.v = 0.9f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.9f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/Enemies/ARMob.png");
+
+
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.0714f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.0714f; v3.v = 0.9f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.9f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/Enemies/SniperMob.png");
+
+
 	// Create Level mesh/texture
 	vertices.clear();
 	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.01f; v1.v = 0.01f;
@@ -647,6 +745,17 @@ void GameStateLevel1Init(void) {
 		playerAnimations[12] = { 2,2,1 };
 		playerAnimations[13] = { 4,2,1 };
 	}
+	// init patrol animation state
+	{
+		patrolAnimations[0] = { 0,0,1 };
+		patrolAnimations[1] = { 11,0,7 };
+		patrolAnimations[2] = { 3,0,1 };
+	}
+	// init sniper animation state
+	{
+		sniperAnimations[0] = { 0,0,0 };
+		sniperAnimations[1] = { 1,0,7 };
+	}
 
 	//-----------------------------------------
 	// Create game object instance from Map
@@ -682,6 +791,19 @@ void GameStateLevel1Init(void) {
 			case 7:
 				gameObjInstCreate(TYPE_ITEM, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 3, 0, 0.25f);
+				break;
+
+				// Patrol
+			case 8:
+				enemy = gameObjInstCreate(TYPE_PATROL, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0416f);
+				enemy->state = STATE_GOING_LEFT;
+				break;
+
+				// Sniper
+			case 9:
+				gameObjInstCreate(TYPE_SNIPER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0714f);
 				break;
 
 			default:
@@ -834,6 +956,9 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		case TYPE_ENEMY:
 			EnemyStateMachine(pInst);
 			break;
+		case TYPE_PATROL:
+			PatrolStateMachine(pInst);
+			break;
 		case TYPE_BULLET:
 			BulletBehave(pInst);
 			break;
@@ -854,7 +979,9 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		if (pInst->flag == FLAG_INACTIVE)
 			continue;
 
-		if (pInst->type == TYPE_PLAYER || pInst->type == TYPE_ENEMY) {
+		if (pInst->type == TYPE_PLAYER ||
+			pInst->type == TYPE_ENEMY ||
+			pInst->type == TYPE_PATROL) {
 
 			// Apply gravity: Velocity Y = Gravity * Frame Time + Velocity Y
 			if (pInst->jumping) {
