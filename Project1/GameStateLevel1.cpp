@@ -20,6 +20,7 @@ using namespace irrklang;
 #define FLAG_ACTIVE					1
 #define COOLDOWN				    1000				
 #define ANIMATION_SPEED				60				// 1 = fastest (update every frame)
+#define BULLET_LIFESPAN				10000			// 10s
 // Movement flags
 #define GRAVITY						-37.0f
 #define JUMP_VELOCITY				18.0f
@@ -39,7 +40,8 @@ enum GAMEOBJ_TYPE
 	// list of game object types
 	TYPE_PLAYER = 0,
 	TYPE_ENEMY,
-	TYPE_ITEM
+	TYPE_ITEM,
+	TYPE_BULLET
 };
 
 //State machine states
@@ -86,7 +88,7 @@ struct GameObj
 
 	//animation data
 	bool			mortal;
-	//int			lifespan;			// in frame unit
+	float			lifespan;
 	bool			anim;				// do animation?
 	int				numFrame;			// #frame in texture animation
 	int				currFrame;
@@ -457,6 +459,25 @@ void GameStateLevel1Load(void) {
 	*pTex = TextureLoad("coin.png");
 
 
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 1.0f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 1.0f; v3.v = 1.0f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 1.0f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/bullet.png");
+
+
 	// Create Level mesh/texture
 	vertices.clear();
 	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.01f; v1.v = 0.01f;
@@ -676,6 +697,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)
 		{
 			isShooting = 7;
+			gameObjInstCreate(TYPE_BULLET, sPlayer->position, sPlayer->velocity, glm::vec3(0.5f, 0.5f, 0.5f), sPlayer->orientation, false, 0, 0, 0);
 		}
 
 		ApplyAnimation(sPlayer, playerAnimations[isShooting + playerMotion]);
@@ -738,6 +760,10 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 				pInst->velocity.y += GRAVITY * dt;
 			}
 
+			// Update position using Velocity
+			pInst->position += pInst->velocity * glm::vec3(dt, dt, 0.0f);
+		}
+		else if (pInst->type == TYPE_BULLET) {
 			// Update position using Velocity
 			pInst->position += pInst->velocity * glm::vec3(dt, dt, 0.0f);
 		}
