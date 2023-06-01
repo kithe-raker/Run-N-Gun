@@ -27,7 +27,8 @@ using namespace irrklang;
 // shooting
 #define BULLET_LIFESPAN				5				// 5s
 #define BULLET_SPEED				12			
-#define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec				
+#define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec		
+#define PATROL_FIRE_COOLDOWN		0.75f			// 4 bullet per 1 sec		
 
 // Movement flags
 #define GRAVITY						-37.0f
@@ -111,6 +112,7 @@ struct GameObj
 
 	//state machine data
 	enum STATE			state;
+	float			shootCooldown;
 	/*
 	enum INNER_STATE	innerState;
 	double				counter;		// use in state machine
@@ -277,6 +279,61 @@ int CheckMapCollision(float PosX, float PosY, bool& inTheAir) {
 
 
 
+// -------------------------------------------
+// Game object instant functions
+// -------------------------------------------
+
+// functions to create/destroy a game object instance
+static GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset);
+static void			gameObjInstDestroy(GameObj& pInst);
+
+
+GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset)
+{
+	// loop through all object instance array to find the free slot
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++) {
+		GameObj* pInst = sGameObjInstArray + i;
+		if (pInst->flag == FLAG_INACTIVE) {
+
+			pInst->mesh = sMeshArray + type;
+			pInst->tex = sTexArray + type;
+			pInst->type = type;
+			pInst->flag = FLAG_ACTIVE;
+			pInst->position = pos;
+			pInst->velocity = vel;
+			pInst->scale = scale;
+			pInst->orientation = orient;
+			pInst->modelMatrix = glm::mat4(1.0f);
+			pInst->mapCollsionFlag = 0;
+			pInst->jumping = false;
+			pInst->anim = anim;
+			pInst->numFrame = numFrame;
+			pInst->currFrame = currFrame;
+			pInst->offset = offset;
+			pInst->initialOffsetX = 0;
+			pInst->offsetX = 0;
+			pInst->offsetY = 0;
+
+			sNumGameObj++;
+			return pInst;
+		}
+	}
+
+	// Cannot find empty slot => return 0
+	return NULL;
+}
+
+void gameObjInstDestroy(GameObj& pInst)
+{
+	// Lazy deletion, not really delete the object, just set it as inactive
+	if (pInst.flag == FLAG_INACTIVE)
+		return;
+
+	sNumGameObj--;
+	pInst.flag = FLAG_INACTIVE;
+}
+
+
 
 // -----------------------------------------------------
 // State machine functions
@@ -343,7 +400,9 @@ void EnemyStateMachine(GameObj* pInst) {
 	}
 }
 
-void PatrolStateMachine(GameObj* patrolInst) {
+void PatrolStateMachine(GameObj* patrolInst, float dt) {
+	if (sPlayer->flag == FLAG_INACTIVE) return;
+
 	float distance = sPlayer->position.x - patrolInst->position.x;
 
 	EnemyStateMachine(patrolInst);
@@ -352,11 +411,31 @@ void PatrolStateMachine(GameObj* patrolInst) {
 	if (abs(distance) < 5) {
 
 		// in shooting range of enemy
-
 		if (abs(distance) < 4) {
 			patrolInst->state = STATE_NONE;
 			patrolInst->scale.x = distance > 0 ? 1 : -1;
 			ApplyAnimation(patrolInst, patrolAnimations[2]);
+
+			if (patrolInst->shootCooldown > 0) {
+				patrolInst->shootCooldown -= dt;
+			}
+			else {
+				// Calculate the direction vector from the object's position to the target point
+				glm::vec3 direction = glm::normalize(sPlayer->position - patrolInst->position);
+
+				// Calculate the angle between the direction vector and the positive x-axis
+				float angle = atan2(direction.y, direction.x) - PI / 2.0f;
+
+				glm::vec3 bullet_velocity = glm::vec3(BULLET_SPEED * glm::cos(angle + PI / 2.0f),
+					BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
+
+				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, patrolInst->position, bullet_velocity, glm::vec3(0.5f, 0.5f, 0.5f), 0, false, 0, 0, 0);
+				bulletInst->playerOwn = false;
+				bulletInst->lifespan = 0;
+
+				patrolInst->shootCooldown = PATROL_FIRE_COOLDOWN;
+			}
+
 		}
 		else
 		{
@@ -384,65 +463,14 @@ void PatrolStateMachine(GameObj* patrolInst) {
 }
 
 
-// -------------------------------------------
-// Game object instant functions
-// -------------------------------------------
-
-// functions to create/destroy a game object instance
-static GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset);
-static void			gameObjInstDestroy(GameObj& pInst);
-
-
-GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset)
-{
-	// loop through all object instance array to find the free slot
-	for (int i = 0; i < GAME_OBJ_INST_MAX; i++) {
-		GameObj* pInst = sGameObjInstArray + i;
-		if (pInst->flag == FLAG_INACTIVE) {
-
-			pInst->mesh = sMeshArray + type;
-			pInst->tex = sTexArray + type;
-			pInst->type = type;
-			pInst->flag = FLAG_ACTIVE;
-			pInst->position = pos;
-			pInst->velocity = vel;
-			pInst->scale = scale;
-			pInst->orientation = orient;
-			pInst->modelMatrix = glm::mat4(1.0f);
-			pInst->mapCollsionFlag = 0;
-			pInst->jumping = false;
-			pInst->anim = anim;
-			pInst->numFrame = numFrame;
-			pInst->currFrame = currFrame;
-			pInst->offset = offset;
-			pInst->initialOffsetX = 0;
-			pInst->offsetX = 0;
-			pInst->offsetY = 0;
-
-			sNumGameObj++;
-			return pInst;
-		}
-	}
-
-	// Cannot find empty slot => return 0
-	return NULL;
-}
-
-void gameObjInstDestroy(GameObj& pInst)
-{
-	// Lazy deletion, not really delete the object, just set it as inactive
-	if (pInst.flag == FLAG_INACTIVE)
-		return;
-
-	sNumGameObj--;
-	pInst.flag = FLAG_INACTIVE;
-}
 
 // -------------------------------------------
 // Utils functions
 // -------------------------------------------
 
 void PlayerTakeDamage(int damage = 1) {
+	if (!sPlayer->mortal || sPlayer->flag == FLAG_INACTIVE) return;
+
 	sPlayerLives -= damage;
 	if (sPlayerLives <= 0) {
 		sRespawnCountdown = 2000;
@@ -457,7 +485,7 @@ void PlayerTakeDamage(int damage = 1) {
 void BulletBehave(GameObj* bulletInst) {
 	if (!bulletInst->playerOwn) {
 
-		if (!sPlayer->mortal) return;
+		if (!sPlayer->mortal || sPlayer->flag == FLAG_INACTIVE) return;
 
 		int result = _detectCollisionAABB(
 			{ sPlayer->position.x, sPlayer->position.y , 1.f, 1.f },
@@ -798,12 +826,14 @@ void GameStateLevel1Init(void) {
 				enemy = gameObjInstCreate(TYPE_PATROL, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0416f);
 				enemy->state = STATE_GOING_LEFT;
+				enemy->shootCooldown = 0.f;
 				break;
 
 				// Sniper
 			case 9:
-				gameObjInstCreate(TYPE_SNIPER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+				enemy = gameObjInstCreate(TYPE_SNIPER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0714f);
+				enemy->shootCooldown = 0.f;
 				break;
 
 			default:
@@ -957,7 +987,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 			EnemyStateMachine(pInst);
 			break;
 		case TYPE_PATROL:
-			PatrolStateMachine(pInst);
+			PatrolStateMachine(pInst, dt);
 			break;
 		case TYPE_BULLET:
 			BulletBehave(pInst);
