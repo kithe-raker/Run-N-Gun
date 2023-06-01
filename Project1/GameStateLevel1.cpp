@@ -546,10 +546,10 @@ void BulletBehave(GameObj* bulletInst) {
 		if (pInst->flag == FLAG_INACTIVE || pInst->type == TYPE_ITEM)
 			continue;
 
-		if (pInst->type == TYPE_ENEMY) {
+		if (pInst->type == TYPE_ENEMY || pInst->type == TYPE_PATROL || pInst->type == TYPE_SNIPER) {
 			int result = _detectCollisionAABB(
 				{ bulletInst->position.x, bulletInst->position.y , bulletInst->scale.x, bulletInst->scale.y },
-				{ pInst->position.x, pInst->position.y, pInst->scale.x, pInst->scale.y });
+				{ pInst->position.x, pInst->position.y, 1.f, 1.f });
 
 			if (result) {
 				gameObjInstDestroy(*pInst);
