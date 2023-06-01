@@ -20,6 +20,9 @@ using namespace irrklang;
 #define FLAG_ACTIVE					1
 #define COOLDOWN				    1000				
 #define ANIMATION_SPEED				60				// 1 = fastest (update every frame)
+#define WINDOW_WIDTH				1200
+#define WINDOW_HEIGHT				800
+
 
 // shooting
 #define BULLET_LIFESPAN				5				// 5s
@@ -174,8 +177,8 @@ static float		sMapOffset;
 
 // Camera
 static glm::vec2	sCamPosition(0.f, 0.f);
-static int			VIEW_WIDTH = 20;
-static int			VIEW_HEIGHT = 20;
+static int			VIEW_WIDTH = 16;
+static int			VIEW_HEIGHT = 10;
 
 
 
@@ -603,14 +606,15 @@ void GameStateLevel1Load(void) {
 	//+ Compute Map Transformation Matrix
 	//-----------------------------------------
 
-	float scaleX = 800.f / VIEW_WIDTH;  // Scale factor for x-axis
-	float scaleY = 800.f / VIEW_HEIGHT;  // Scale factor for y-axis
+
+	float scaleX = WINDOW_WIDTH / VIEW_WIDTH;  // Scale factor for x-axis
+	float scaleY = WINDOW_HEIGHT / VIEW_HEIGHT;  // Scale factor for y-axis
 	glm::mat4 scaleMatrix = glm::mat4(1.0f);  // Identity matrix
 	scaleMatrix[0][0] = scaleX;
 	scaleMatrix[1][1] = scaleY;
 
-	float translateX = -400.f; // 800 divided by 2
-	float translateY = -400.f; // 800 divided by 2
+	float translateX = -(WINDOW_WIDTH / 2);
+	float translateY = -(WINDOW_HEIGHT / 2);
 	glm::mat4 translateMatrix = glm::mat4(1.0f);  // Identity matrix
 	translateMatrix[3][0] = translateX;
 	translateMatrix[3][1] = translateY;

@@ -55,7 +55,7 @@ double	frametime = 0;
 long	framenumber = 0;
 
 // windows
-int		win_width = 800;// 1024;
+int		win_width = 1200;// 1024;
 int		win_height = 800;//  768;
 
 
