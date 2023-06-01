@@ -20,6 +20,20 @@ using namespace irrklang;
 #define FLAG_ACTIVE					1
 #define COOLDOWN				    1000				
 #define ANIMATION_SPEED				60				// 1 = fastest (update every frame)
+#define WINDOW_WIDTH				1200
+#define WINDOW_HEIGHT				800
+
+
+// shooting
+#define BULLET_LIFESPAN				5				// 5s
+#define BULLET_SPEED				12			
+#define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec		
+#define PATROL_FIRE_COOLDOWN		1.f			
+#define PATROL_BULLET_SPEED			5	
+#define SNIPER_FIRE_COOLDOWN		2.f			
+#define SNIPER_BULLET_SPEED			10	
+
+
 // Movement flags
 #define GRAVITY						-37.0f
 #define JUMP_VELOCITY				18.0f
@@ -39,7 +53,10 @@ enum GAMEOBJ_TYPE
 	// list of game object types
 	TYPE_PLAYER = 0,
 	TYPE_ENEMY,
-	TYPE_ITEM
+	TYPE_ITEM,
+	TYPE_BULLET,
+	TYPE_PATROL,
+	TYPE_SNIPER
 };
 
 //State machine states
@@ -64,6 +81,12 @@ INNER_STATE_ON_EXIT
 // Structure definitions
 // -------------------------------------------
 
+struct AnimationSprite {
+	int beginX;
+	int beginY;
+	int endFrame;
+};
+
 struct GameObj
 {
 	CDTMesh* mesh;
@@ -77,20 +100,23 @@ struct GameObj
 	glm::mat4		modelMatrix;		// transform from model space [-0.5,0.5] to map space [0,MAP_SIZE]
 	int				mapCollsionFlag;	// for testing collision detection with map
 	bool			jumping;			// Is Player jumping or on the ground
+	bool			playerOwn;			// true if ignore player's collision
 
 	//animation data
 	bool			mortal;
-	//int			lifespan;			// in frame unit
+	float			lifespan;
 	bool			anim;				// do animation?
 	int				numFrame;			// #frame in texture animation
 	int				currFrame;
 	float			offset;				// offset value of each frame
 	float			offsetX;			// assume single row sprite sheet
+	float			initialOffsetX;
 	float			offsetY;			// will be set to 0 for this single row implementation		
 
 
 	//state machine data
 	enum STATE			state;
+	float			shootCooldown;
 	/*
 	enum INNER_STATE	innerState;
 	double				counter;		// use in state machine
@@ -124,7 +150,38 @@ static int			sPlayerLives;									// The number of lives left
 static int			sScore;
 static int			sRespawnCountdown;								// Respawn player waiting time (in #frame)
 static int			sMortalCountdown;
+static float		sShootingCooldown = 0;
 
+
+/*
+	mapping of player's animation
+	using by (state + motion) for calculate index
+
+	state:	idle		= 0
+			shooting	= 7
+
+	motion: idle		= 0
+			idle_up		= 1
+			walking		= 2
+			walking_up	= 3
+			jumping		= 4
+			jumping_up	= 5
+			jumping_down= 6
+*/
+static AnimationSprite playerAnimations[14];
+/*
+	mapping of patrol's animation
+	idle = 0
+	walking = 1
+	shooting = 2
+*/
+static AnimationSprite patrolAnimations[3];
+/*
+	mapping of sniper's animation
+	idle = 0
+	shooting = 1
+*/
+static AnimationSprite sniperAnimations[2];
 
 //Sound
 ISoundEngine* SoundEngine;
@@ -141,8 +198,8 @@ static float		sMapOffset;
 
 // Camera
 static glm::vec2	sCamPosition(0.f, 0.f);
-static int			VIEW_WIDTH = 20;
-static int			VIEW_HEIGHT = 20;
+static int			VIEW_WIDTH = 16;
+static int			VIEW_HEIGHT = 10;
 
 
 
@@ -226,10 +283,72 @@ int CheckMapCollision(float PosX, float PosY, bool& inTheAir) {
 
 
 
+// -------------------------------------------
+// Game object instant functions
+// -------------------------------------------
+
+// functions to create/destroy a game object instance
+static GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset);
+static void			gameObjInstDestroy(GameObj& pInst);
+
+
+GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset)
+{
+	// loop through all object instance array to find the free slot
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++) {
+		GameObj* pInst = sGameObjInstArray + i;
+		if (pInst->flag == FLAG_INACTIVE) {
+
+			pInst->mesh = sMeshArray + type;
+			pInst->tex = sTexArray + type;
+			pInst->type = type;
+			pInst->flag = FLAG_ACTIVE;
+			pInst->position = pos;
+			pInst->velocity = vel;
+			pInst->scale = scale;
+			pInst->orientation = orient;
+			pInst->modelMatrix = glm::mat4(1.0f);
+			pInst->mapCollsionFlag = 0;
+			pInst->jumping = false;
+			pInst->anim = anim;
+			pInst->numFrame = numFrame;
+			pInst->currFrame = currFrame;
+			pInst->offset = offset;
+			pInst->initialOffsetX = 0;
+			pInst->offsetX = 0;
+			pInst->offsetY = 0;
+
+			sNumGameObj++;
+			return pInst;
+		}
+	}
+
+	// Cannot find empty slot => return 0
+	return NULL;
+}
+
+void gameObjInstDestroy(GameObj& pInst)
+{
+	// Lazy deletion, not really delete the object, just set it as inactive
+	if (pInst.flag == FLAG_INACTIVE)
+		return;
+
+	sNumGameObj--;
+	pInst.flag = FLAG_INACTIVE;
+}
+
+
 
 // -----------------------------------------------------
 // State machine functions
 // -----------------------------------------------------
+
+
+void ApplyAnimation(GameObj* pInst, const AnimationSprite& anim) {
+	pInst->initialOffsetX = anim.beginX * pInst->offset;
+	pInst->offsetY = anim.beginY * pInst->offset;
+	pInst->numFrame = anim.endFrame;
+}
 
 void EnemyStateMachine(GameObj* pInst) {
 	bool isInAir = false;
@@ -272,68 +391,176 @@ void EnemyStateMachine(GameObj* pInst) {
 	switch (pInst->state)
 	{
 	case STATE_GOING_LEFT:
+		pInst->scale.x = 1;
 		pInst->velocity.x = -MOVE_VELOCITY_ENEMY;
 		break;
 	case STATE_GOING_RIGHT:
+		pInst->scale.x = -1;
 		pInst->velocity.x = MOVE_VELOCITY_ENEMY;
 		break;
 	default:
+		pInst->velocity.x = 0;
 		break;
 	}
 }
 
+void PatrolStateMachine(GameObj* patrolInst, float dt) {
+	if (sPlayer->flag == FLAG_INACTIVE) return;
 
-// -------------------------------------------
-// Game object instant functions
-// -------------------------------------------
+	float distance = sPlayer->position.x - patrolInst->position.x;
 
-// functions to create/destroy a game object instance
-static GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset);
-static void			gameObjInstDestroy(GameObj& pInst);
+	EnemyStateMachine(patrolInst);
 
+	// in detect range of enemy
+	if (abs(distance) < 5) {
 
-GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 scale, float orient, bool anim, int numFrame, int currFrame, float offset)
-{
-	// loop through all object instance array to find the free slot
-	for (int i = 0; i < GAME_OBJ_INST_MAX; i++) {
-		GameObj* pInst = sGameObjInstArray + i;
-		if (pInst->flag == FLAG_INACTIVE) {
+		// in shooting range of enemy
+		if (abs(distance) < 4) {
+			patrolInst->state = STATE_NONE;
+			patrolInst->scale.x = distance > 0 ? 1 : -1;
+			ApplyAnimation(patrolInst, patrolAnimations[2]);
 
-			pInst->mesh = sMeshArray + type;
-			pInst->tex = sTexArray + type;
-			pInst->type = type;
-			pInst->flag = FLAG_ACTIVE;
-			pInst->position = pos;
-			pInst->velocity = vel;
-			pInst->scale = scale;
-			pInst->orientation = orient;
-			pInst->modelMatrix = glm::mat4(1.0f);
-			pInst->mapCollsionFlag = 0;
-			pInst->jumping = false;
-			pInst->anim = anim;
-			pInst->numFrame = numFrame;
-			pInst->currFrame = currFrame;
-			pInst->offset = offset;
-			pInst->offsetX = 0;
-			pInst->offsetY = 0;
+			if (patrolInst->shootCooldown > 0) {
+				patrolInst->shootCooldown -= dt;
+			}
+			else {
+				// Calculate the direction vector from the object's position to the target point
+				glm::vec3 direction = glm::normalize(sPlayer->position - patrolInst->position);
 
-			sNumGameObj++;
-			return pInst;
+				// Calculate the angle between the direction vector and the positive x-axis
+				float angle = atan2(direction.y, direction.x) - PI / 2.0f;
+
+				glm::vec3 bullet_velocity = glm::vec3(PATROL_BULLET_SPEED * glm::cos(angle + PI / 2.0f),
+					PATROL_BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
+
+				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, patrolInst->position, bullet_velocity, glm::vec3(0.5f, 0.5f, 0.5f), 0, false, 0, 0, 0);
+				bulletInst->playerOwn = false;
+				bulletInst->lifespan = 0;
+
+				patrolInst->shootCooldown = PATROL_FIRE_COOLDOWN;
+			}
+
+		}
+		else
+		{
+			patrolInst->state = distance > 0 ? STATE_GOING_RIGHT : STATE_GOING_LEFT;
 		}
 	}
 
-	// Cannot find empty slot => return 0
-	return NULL;
+
+	switch (patrolInst->state)
+	{
+	case STATE_GOING_LEFT:
+		patrolInst->scale.x = -1;
+		patrolInst->velocity.x = -MOVE_VELOCITY_ENEMY;
+		ApplyAnimation(patrolInst, patrolAnimations[1]);
+		break;
+	case STATE_GOING_RIGHT:
+		patrolInst->scale.x = 1;
+		patrolInst->velocity.x = MOVE_VELOCITY_ENEMY;
+		ApplyAnimation(patrolInst, patrolAnimations[1]);
+		break;
+	default:
+		patrolInst->velocity.x = 0;
+		break;
+	}
 }
 
-void gameObjInstDestroy(GameObj& pInst)
-{
-	// Lazy deletion, not really delete the object, just set it as inactive
-	if (pInst.flag == FLAG_INACTIVE)
-		return;
+void SniperStateMachine(GameObj* sniperInst, float dt) {
+	if (sPlayer->flag == FLAG_INACTIVE) return;
 
-	sNumGameObj--;
-	pInst.flag = FLAG_INACTIVE;
+	float distance = sPlayer->position.x - sniperInst->position.x;
+
+	// in shooting range of enemy
+	if (abs(distance) < 7) {
+		sniperInst->scale.x = distance > 0 ? 1 : -1;
+		ApplyAnimation(sniperInst, sniperAnimations[1]);
+
+		if (sniperInst->shootCooldown > 0) {
+			sniperInst->shootCooldown -= dt;
+		}
+		else {
+			// Calculate the direction vector from the object's position to the target point
+			glm::vec3 direction = glm::normalize(sPlayer->position - sniperInst->position);
+
+			// Calculate the angle between the direction vector and the positive x-axis
+			float angle = atan2(direction.y, direction.x) - PI / 2.0f;
+
+			glm::vec3 bullet_velocity = glm::vec3(SNIPER_BULLET_SPEED * glm::cos(angle + PI / 2.0f),
+				SNIPER_BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
+
+			GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, sniperInst->position, bullet_velocity, glm::vec3(0.5f, 0.5f, 0.5f), 0, false, 0, 0, 0);
+			bulletInst->playerOwn = false;
+			bulletInst->lifespan = 0;
+
+			sniperInst->shootCooldown = SNIPER_FIRE_COOLDOWN;
+		}
+	}
+	else {
+		ApplyAnimation(sniperInst, sniperAnimations[0]);
+	}
+}
+
+
+
+// -------------------------------------------
+// Utils functions
+// -------------------------------------------
+
+void PlayerTakeDamage(int damage = 1) {
+	if (!sPlayer->mortal || sPlayer->flag == FLAG_INACTIVE) return;
+
+	sPlayerLives -= damage;
+	if (sPlayerLives <= 0) {
+		sRespawnCountdown = 2000;
+		gameObjInstDestroy(*sPlayer);
+	}
+	else {
+		sPlayer->mortal = false;
+		sMortalCountdown = COOLDOWN;
+	}
+}
+
+void BulletBehave(GameObj* bulletInst) {
+	if (!bulletInst->playerOwn) {
+
+		if (!sPlayer->mortal || sPlayer->flag == FLAG_INACTIVE) return;
+
+		int result = _detectCollisionAABB(
+			{ sPlayer->position.x, sPlayer->position.y , 1.f, 1.f },
+			{ bulletInst->position.x, bulletInst->position.y, bulletInst->scale.x, bulletInst->scale.y });
+
+		if (result) {
+			gameObjInstDestroy(*bulletInst);
+			PlayerTakeDamage();
+		}
+
+		return;
+	}
+
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++)
+	{
+		GameObj* pInst = sGameObjInstArray + i;
+
+		// skip inactive object
+		if (pInst->flag == FLAG_INACTIVE || pInst->type == TYPE_ITEM)
+			continue;
+
+		if (pInst->type == TYPE_ENEMY || pInst->type == TYPE_PATROL || pInst->type == TYPE_SNIPER) {
+			int result = _detectCollisionAABB(
+				{ bulletInst->position.x, bulletInst->position.y , bulletInst->scale.x, bulletInst->scale.y },
+				{ pInst->position.x, pInst->position.y, 1.f, 1.f });
+
+			if (result) {
+				gameObjInstDestroy(*pInst);
+				gameObjInstDestroy(*bulletInst);
+
+				break;
+			}
+		}
+	}
+
+
 }
 
 
@@ -373,9 +600,9 @@ void GameStateLevel1Load(void) {
 	// Create Player mesh/texture
 	vertices.clear();
 	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
-	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.25f; v2.v = 0.0f;
-	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.25f; v3.v = 1.0f;
-	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 1.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.125f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.125f; v3.v = 0.122f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.122f;
 	vertices.push_back(v1);
 	vertices.push_back(v2);
 	vertices.push_back(v3);
@@ -386,7 +613,7 @@ void GameStateLevel1Load(void) {
 	pMesh = sMeshArray + sNumMesh++;
 	pTex = sTexArray + sNumTex++;
 	*pMesh = CreateMesh(vertices);
-	*pTex = TextureLoad("mario.png");
+	*pTex = TextureLoad("rngun/Player/player_sprite.png");
 
 	//+ Create Enemy mesh/texture
 	vertices.clear();
@@ -424,6 +651,63 @@ void GameStateLevel1Load(void) {
 	pTex = sTexArray + sNumTex++;
 	*pMesh = CreateMesh(vertices);
 	*pTex = TextureLoad("coin.png");
+
+
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 1.0f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 1.0f; v3.v = 1.0f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 1.0f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/bullet.png");
+
+
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.0416f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.0416f; v3.v = 0.9f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.9f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/Enemies/ARMob.png");
+
+
+	//+ Create Item mesh/texture
+	vertices.clear();
+	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.0714f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.0714f; v3.v = 0.9f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.9f;
+	vertices.push_back(v1);
+	vertices.push_back(v2);
+	vertices.push_back(v3);
+	vertices.push_back(v1);
+	vertices.push_back(v3);
+	vertices.push_back(v4);
+
+	pMesh = sMeshArray + sNumMesh++;
+	pTex = sTexArray + sNumTex++;
+	*pMesh = CreateMesh(vertices);
+	*pTex = TextureLoad("rngun/Enemies/SniperMob.png");
 
 
 	// Create Level mesh/texture
@@ -487,14 +771,15 @@ void GameStateLevel1Load(void) {
 	//+ Compute Map Transformation Matrix
 	//-----------------------------------------
 
-	float scaleX = 800.f / VIEW_WIDTH;  // Scale factor for x-axis
-	float scaleY = 800.f / VIEW_HEIGHT;  // Scale factor for y-axis
+
+	float scaleX = WINDOW_WIDTH / VIEW_WIDTH;  // Scale factor for x-axis
+	float scaleY = WINDOW_HEIGHT / VIEW_HEIGHT;  // Scale factor for y-axis
 	glm::mat4 scaleMatrix = glm::mat4(1.0f);  // Identity matrix
 	scaleMatrix[0][0] = scaleX;
 	scaleMatrix[1][1] = scaleY;
 
-	float translateX = -400.f; // 800 divided by 2
-	float translateY = -400.f; // 800 divided by 2
+	float translateX = -(WINDOW_WIDTH / 2);
+	float translateY = -(WINDOW_HEIGHT / 2);
 	glm::mat4 translateMatrix = glm::mat4(1.0f);  // Identity matrix
 	translateMatrix[3][0] = translateX;
 	translateMatrix[3][1] = translateY;
@@ -506,6 +791,38 @@ void GameStateLevel1Load(void) {
 }
 
 void GameStateLevel1Init(void) {
+
+	// init player animation state
+	{
+		// idle
+		playerAnimations[0] = { 0,7,5 };
+		playerAnimations[1] = { 6,7,0 };
+		playerAnimations[2] = { 0,6,6 };
+		playerAnimations[3] = { 0,0,7 };
+		playerAnimations[4] = { 0,5,0 };
+		playerAnimations[5] = { 2,5,0 };
+		playerAnimations[6] = { 1,5,0 };
+
+		// shooting
+		playerAnimations[7] = { 3,5,1 };
+		playerAnimations[8] = { 5,5,1 };
+		playerAnimations[9] = { 0,4,7 };
+		playerAnimations[10] = { 0,3,7 };
+		playerAnimations[11] = { 0,2,1 };
+		playerAnimations[12] = { 2,2,1 };
+		playerAnimations[13] = { 4,2,1 };
+	}
+	// init patrol animation state
+	{
+		patrolAnimations[0] = { 0,0,1 };
+		patrolAnimations[1] = { 11,0,7 };
+		patrolAnimations[2] = { 3,0,1 };
+	}
+	// init sniper animation state
+	{
+		sniperAnimations[0] = { 0,0,0 };
+		sniperAnimations[1] = { 1,0,7 };
+	}
 
 	//-----------------------------------------
 	// Create game object instance from Map
@@ -520,11 +837,14 @@ void GameStateLevel1Init(void) {
 			switch (sMapData[y][x]) {
 				// Player
 			case 5:
+
 				sPlayer = gameObjInstCreate(TYPE_PLAYER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, false, 2, 0, 0.25f);
-				sPlayer->scale.x = -1;
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.125f);
 				sPlayer->mortal = false;
 				sPlayer_start_position = glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f);
+
+				// idle
+				ApplyAnimation(sPlayer, playerAnimations[0]);
 				break;
 
 				//+ Enemy
@@ -538,6 +858,21 @@ void GameStateLevel1Init(void) {
 			case 7:
 				gameObjInstCreate(TYPE_ITEM, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 3, 0, 0.25f);
+				break;
+
+				// Patrol
+			case 8:
+				enemy = gameObjInstCreate(TYPE_PATROL, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0416f);
+				enemy->state = STATE_GOING_LEFT;
+				enemy->shootCooldown = 0.f;
+				break;
+
+				// Sniper
+			case 9:
+				enemy = gameObjInstCreate(TYPE_SNIPER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+					glm::vec3(-1.0f, 1.0f, 1.0f), 0.0f, true, 0, 0, 0.0714f);
+				enemy->shootCooldown = 0.f;
 				break;
 
 			default:
@@ -566,43 +901,95 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 	//-----------------------------------------
 
 	if (sRespawnCountdown <= 0) {
+		// assign 7 if true
+		int isShooting = 0;
+
+		// shooting y direction
+		// -1 down
+		// 0 default
+		// 1 top
+		int shootingY = 0;
+
+		// apply animation from [playerAnimations]
+		int playerMotion = 0;
+
 
 		//+ Moving the Player
-		//	- W:	jumping
+		//	- SPACE:	jumping
 		//	- AD:	go left, go right
-		if ((glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) && (sPlayer->jumping == false)) {
+		if ((glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) && (sPlayer->jumping == false)) {
 			sPlayer->jumping = true;
 			sPlayer->velocity.y = JUMP_VELOCITY;
 			SoundEngine->play2D("jump.wav");
 
 		}
 		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-			sPlayer->scale.x = 1;
+			sPlayer->scale.x = -1;
 			sPlayer->velocity.x = -MOVE_VELOCITY_PLAYER;
 
-			// play animation
-			sPlayer->anim = true;
+			playerMotion = 2;
 		}
 		else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-			sPlayer->scale.x = -1;
+			sPlayer->scale.x = 1;
 			sPlayer->velocity.x = MOVE_VELOCITY_PLAYER;
 
-			// play animation
-			sPlayer->anim = true;
+			playerMotion = 2;
 		}
 		else {
 			float friction = 0.05f;
 			sPlayer->velocity.x *= (1.0f - friction);
 
 			// using Idle animation
-			sPlayer->anim = false;
-			sPlayer->offsetX = sPlayer->offset * 0;
+			playerMotion = 0;
 		}
 
 		if (sPlayer->jumping) {
-			sPlayer->anim = false;
-			sPlayer->offsetX = sPlayer->offset * 3;
+			playerMotion = 4;
 		}
+
+
+		// Get player's direction input
+		// W - Up
+		// S - Down
+		if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+			playerMotion++;
+
+			shootingY = 1;
+		}
+		else if (sPlayer->jumping && glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+			playerMotion += 2;
+
+			shootingY = -1;
+		}
+
+		// J - shoot
+		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)
+		{
+			isShooting = 7;
+
+			if (sShootingCooldown > 0)
+			{
+				sShootingCooldown -= dt;
+			}
+			else
+			{
+				glm::vec3 bulletVel = glm::vec3(BULLET_SPEED * sPlayer->scale.x, 0, 0);
+				if (shootingY)
+				{
+					bulletVel.x = 0;
+					bulletVel.y = BULLET_SPEED * shootingY;
+				}
+
+				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, sPlayer->position, bulletVel, glm::vec3(0.5f, 0.5f, 0.5f), sPlayer->orientation, false, 0, 0, 0);
+				bulletInst->lifespan = 0;
+				bulletInst->playerOwn = true;
+
+				sShootingCooldown = PLAYER_FIRE_COOLDOWN;
+			}
+
+		}
+
+		ApplyAnimation(sPlayer, playerAnimations[isShooting + playerMotion]);
 	}
 	else {
 		//+ update sRespawnCountdown
@@ -638,6 +1025,15 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		case TYPE_ENEMY:
 			EnemyStateMachine(pInst);
 			break;
+		case TYPE_PATROL:
+			PatrolStateMachine(pInst, dt);
+			break;
+		case TYPE_SNIPER:
+			SniperStateMachine(pInst, dt);
+			break;
+		case TYPE_BULLET:
+			BulletBehave(pInst);
+			break;
 		default:
 			break;
 		}
@@ -655,13 +1051,19 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 		if (pInst->flag == FLAG_INACTIVE)
 			continue;
 
-		if (pInst->type == TYPE_PLAYER || pInst->type == TYPE_ENEMY) {
+		if (pInst->type == TYPE_PLAYER ||
+			pInst->type == TYPE_ENEMY ||
+			pInst->type == TYPE_PATROL) {
 
 			// Apply gravity: Velocity Y = Gravity * Frame Time + Velocity Y
 			if (pInst->jumping) {
 				pInst->velocity.y += GRAVITY * dt;
 			}
 
+			// Update position using Velocity
+			pInst->position += pInst->velocity * glm::vec3(dt, dt, 0.0f);
+		}
+		else if (pInst->type == TYPE_BULLET) {
 			// Update position using Velocity
 			pInst->position += pInst->velocity * glm::vec3(dt, dt, 0.0f);
 		}
@@ -687,7 +1089,29 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 	//--------------------------------------------------------------------
 	// Decrease object lifespan for self destroyed objects (ex. explosion)
 	//--------------------------------------------------------------------
+	for (int i = 0; i < GAME_OBJ_INST_MAX; i++)
+	{
+		GameObj* pInst = sGameObjInstArray + i;
 
+		// skip inactive object
+		if (pInst->flag == FLAG_INACTIVE)
+			continue;
+
+		switch (pInst->type)
+		{
+		case TYPE_BULLET:
+			if (pInst->lifespan > BULLET_LIFESPAN) {
+				gameObjInstDestroy(*pInst);
+			}
+			else {
+				pInst->lifespan += dt;
+			}
+			break;
+		default:
+			break;
+		}
+
+	}
 
 	//-----------------------------------------
 	// Update animation for animated object 
@@ -711,7 +1135,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 					pInst->currFrame = 0;
 
 				//+ use currFrame infomation to set pInst->offsetX
-				pInst->offsetX = pInst->currFrame * pInst->offset;
+				pInst->offsetX = pInst->initialOffsetX + (pInst->currFrame * pInst->offset);
 
 			}
 		}
@@ -798,14 +1222,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 					gameObjInstDestroy(*pInst);
 				}
 				else {
-					if (--sPlayerLives <= 0) {
-						sRespawnCountdown = 2000;
-						gameObjInstDestroy(*sPlayer);
-					}
-					else {
-						sPlayer->mortal = false;
-						sMortalCountdown = COOLDOWN;
-					}
+					PlayerTakeDamage();
 				}
 			}
 		}
@@ -928,7 +1345,13 @@ void GameStateLevel1Draw(void) {
 		// skip if out of view
 		if (objCoorX < minRenderCoorX || objCoorX > maxRenderCoorX ||
 			objCoorY < minRenderCoorY || objCoorY > maxRenderCoorY)
+		{
+			// if obj is bullet, destroy it
+			if (pInst->type == TYPE_BULLET)
+				gameObjInstDestroy(*pInst);
+
 			continue;
+		}
 
 
 		// Transform cell from map space [0,MAP_SIZE] to screen space [-width/2,width/2]
