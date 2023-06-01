@@ -64,6 +64,12 @@ INNER_STATE_ON_EXIT
 // Structure definitions
 // -------------------------------------------
 
+struct AnimationSprite {
+	int beginX;
+	int beginY;
+	int endFrame;
+};
+
 struct GameObj
 {
 	CDTMesh* mesh;
@@ -86,6 +92,7 @@ struct GameObj
 	int				currFrame;
 	float			offset;				// offset value of each frame
 	float			offsetX;			// assume single row sprite sheet
+	float			initialOffsetX;
 	float			offsetY;			// will be set to 0 for this single row implementation		
 
 
@@ -125,6 +132,23 @@ static int			sScore;
 static int			sRespawnCountdown;								// Respawn player waiting time (in #frame)
 static int			sMortalCountdown;
 
+
+/*
+	mapping of player's animation
+	using by (state + motion) for calculate index
+
+	state:	idle		= 0
+			shooting	= 7
+
+	motion: idle		= 0
+			idle_up		= 1
+			walking		= 2
+			walking_up	= 3
+			jumping		= 4
+			jumping_down= 5
+			jumping_up	= 6
+*/
+static AnimationSprite playerAnimations[14];
 
 //Sound
 ISoundEngine* SoundEngine;
@@ -282,6 +306,12 @@ void EnemyStateMachine(GameObj* pInst) {
 	}
 }
 
+void ApplyAnimation(GameObj* pInst, const AnimationSprite& anim) {
+	pInst->initialOffsetX = anim.beginX * pInst->offset;
+	pInst->offsetY = anim.beginY * pInst->offset;
+	pInst->numFrame = anim.endFrame;
+}
+
 
 // -------------------------------------------
 // Game object instant functions
@@ -314,6 +344,7 @@ GameObj* gameObjInstCreate(int type, glm::vec3 pos, glm::vec3 vel, glm::vec3 sca
 			pInst->numFrame = numFrame;
 			pInst->currFrame = currFrame;
 			pInst->offset = offset;
+			pInst->initialOffsetX = 0;
 			pInst->offsetX = 0;
 			pInst->offsetY = 0;
 
@@ -373,9 +404,9 @@ void GameStateLevel1Load(void) {
 	// Create Player mesh/texture
 	vertices.clear();
 	v1.x = -0.5f; v1.y = -0.5f; v1.z = 0.0f; v1.r = 1.0f; v1.g = 0.0f; v1.b = 0.0f; v1.u = 0.0f; v1.v = 0.0f;
-	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.25f; v2.v = 0.0f;
-	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.25f; v3.v = 1.0f;
-	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 1.0f;
+	v2.x = 0.5f; v2.y = -0.5f; v2.z = 0.0f; v2.r = 0.0f; v2.g = 1.0f; v2.b = 0.0f; v2.u = 0.125f; v2.v = 0.0f;
+	v3.x = 0.5f; v3.y = 0.5f; v3.z = 0.0f; v3.r = 0.0f; v3.g = 0.0f; v3.b = 1.0f; v3.u = 0.125f; v3.v = 0.125f;
+	v4.x = -0.5f; v4.y = 0.5f; v4.z = 0.0f; v4.r = 1.0f; v4.g = 1.0f; v4.b = 0.0f; v4.u = 0.0f; v4.v = 0.125f;
 	vertices.push_back(v1);
 	vertices.push_back(v2);
 	vertices.push_back(v3);
@@ -386,7 +417,7 @@ void GameStateLevel1Load(void) {
 	pMesh = sMeshArray + sNumMesh++;
 	pTex = sTexArray + sNumTex++;
 	*pMesh = CreateMesh(vertices);
-	*pTex = TextureLoad("mario.png");
+	*pTex = TextureLoad("rngun/Player/player_sprite.png");
 
 	//+ Create Enemy mesh/texture
 	vertices.clear();
@@ -507,6 +538,27 @@ void GameStateLevel1Load(void) {
 
 void GameStateLevel1Init(void) {
 
+	// init player animation state
+	{
+		// idle
+		playerAnimations[0] = { 0,7,5 };
+		playerAnimations[1] = { 6,7,0 };
+		playerAnimations[2] = { 0,6,6 };
+		playerAnimations[3] = { 0,0,7 };
+		playerAnimations[4] = { 0,5,0 };
+		playerAnimations[5] = { 1,5,0 };
+		playerAnimations[6] = { 2,5,0 };
+
+		// shooting
+		playerAnimations[7] = { 3,5,1 };
+		playerAnimations[8] = { 5,5,1 };
+		playerAnimations[9] = { 0,4,7 };
+		playerAnimations[10] = { 0,3,7 };
+		playerAnimations[11] = { 0,2,1 };
+		playerAnimations[12] = { 4,2,1 };
+		playerAnimations[13] = { 2,2,1 };
+	}
+
 	//-----------------------------------------
 	// Create game object instance from Map
 	//	0,1,2,3,4:	level tiles
@@ -520,11 +572,14 @@ void GameStateLevel1Init(void) {
 			switch (sMapData[y][x]) {
 				// Player
 			case 5:
+
 				sPlayer = gameObjInstCreate(TYPE_PLAYER, glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, false, 2, 0, 0.25f);
-				sPlayer->scale.x = -1;
+					glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, false, 0, 0, 0.125f);
 				sPlayer->mortal = false;
 				sPlayer_start_position = glm::vec3(x + 0.5f, (MAP_HEIGHT - y) - 0.5f, 0.0f);
+
+				// idle
+				ApplyAnimation(sPlayer, playerAnimations[0]);
 				break;
 
 				//+ Enemy
@@ -577,31 +632,31 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 
 		}
 		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-			sPlayer->scale.x = 1;
+			sPlayer->scale.x = -1;
 			sPlayer->velocity.x = -MOVE_VELOCITY_PLAYER;
 
 			// play animation
 			sPlayer->anim = true;
+			ApplyAnimation(sPlayer, playerAnimations[2]);
 		}
 		else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-			sPlayer->scale.x = -1;
+			sPlayer->scale.x = 1;
 			sPlayer->velocity.x = MOVE_VELOCITY_PLAYER;
 
 			// play animation
 			sPlayer->anim = true;
+			ApplyAnimation(sPlayer, playerAnimations[2]);
 		}
 		else {
 			float friction = 0.05f;
 			sPlayer->velocity.x *= (1.0f - friction);
 
 			// using Idle animation
-			sPlayer->anim = false;
-			sPlayer->offsetX = sPlayer->offset * 0;
+			ApplyAnimation(sPlayer, playerAnimations[0]);
 		}
 
 		if (sPlayer->jumping) {
-			sPlayer->anim = false;
-			sPlayer->offsetX = sPlayer->offset * 3;
+			ApplyAnimation(sPlayer, playerAnimations[4]);
 		}
 	}
 	else {
@@ -711,7 +766,7 @@ void GameStateLevel1Update(double dt, long frame, int& state) {
 					pInst->currFrame = 0;
 
 				//+ use currFrame infomation to set pInst->offsetX
-				pInst->offsetX = pInst->currFrame * pInst->offset;
+				pInst->offsetX = pInst->initialOffsetX + (pInst->currFrame * pInst->offset);
 
 			}
 		}
