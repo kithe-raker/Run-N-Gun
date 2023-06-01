@@ -28,7 +28,9 @@ using namespace irrklang;
 #define BULLET_LIFESPAN				5				// 5s
 #define BULLET_SPEED				12			
 #define PLAYER_FIRE_COOLDOWN		0.25f			// 4 bullet per 1 sec		
-#define PATROL_FIRE_COOLDOWN		0.75f			// 4 bullet per 1 sec		
+#define PATROL_FIRE_COOLDOWN		1.f			
+#define PATROL_BULLET_SPEED			5			
+
 
 // Movement flags
 #define GRAVITY						-37.0f
@@ -426,8 +428,8 @@ void PatrolStateMachine(GameObj* patrolInst, float dt) {
 				// Calculate the angle between the direction vector and the positive x-axis
 				float angle = atan2(direction.y, direction.x) - PI / 2.0f;
 
-				glm::vec3 bullet_velocity = glm::vec3(BULLET_SPEED * glm::cos(angle + PI / 2.0f),
-					BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
+				glm::vec3 bullet_velocity = glm::vec3(PATROL_BULLET_SPEED * glm::cos(angle + PI / 2.0f),
+					PATROL_BULLET_SPEED * glm::sin(angle + PI / 2.0f), 0);
 
 				GameObj* bulletInst = gameObjInstCreate(TYPE_BULLET, patrolInst->position, bullet_velocity, glm::vec3(0.5f, 0.5f, 0.5f), 0, false, 0, 0, 0);
 				bulletInst->playerOwn = false;
